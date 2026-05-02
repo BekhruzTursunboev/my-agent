@@ -132,12 +132,13 @@ bot.on('voice', async (ctx) => {
 
         const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
         
-        // Try to generate voice, fallback to text if ElevenLabs fails
+        // ALWAYS send text first
+        await sendSafeMessage(ctx, responseText);
+        
+        // Try to generate and send voice
         const audioBuffer = await generateVoice(responseText);
         if (audioBuffer) {
             await ctx.replyWithVoice({ source: audioBuffer });
-        } else {
-            await sendSafeMessage(ctx, responseText);
         }
     } catch (error) {
         console.error("Error processing voice:", error);
