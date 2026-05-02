@@ -76,14 +76,11 @@ async function sendSafeMessage(ctx, text) {
     }
 }
 
-// ElevenLabs Voice Generator
 async function generateVoice(text) {
     if (!process.env.ELEVENLABS_API_KEY) return null;
     try {
-        const VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Deep Male Voice (Adam)
+        const VOICE_ID = "pNInz6obpgDQGcFmaJgB"; 
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
-        
-        // Strip HTML tags for the text-to-speech engine
         const cleanText = text.replace(/<[^>]*>?/gm, '');
 
         const response = await axios.post(url, {
@@ -104,25 +101,29 @@ async function generateVoice(text) {
     }
 }
 
-bot.start((ctx) => ctx.reply("System active. Comms secure. Neon Database Online. Speak, soldier."));
+bot.start(async (ctx) => await ctx.reply("System active. Comms secure. Neon Database Online. Speak, soldier."));
 
 bot.on('text', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('typing');
+        await ctx.sendChatAction('typing');
         const responseText = await processMessage(chatId, ctx.message.text);
         await sendSafeMessage(ctx, responseText);
+        
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) {
+            await ctx.replyWithVoice({ source: audioBuffer });
+        }
     } catch (error) {
         console.error("Error processing text:", error);
-        ctx.reply("System error. The comms are jammed.");
+        await ctx.reply("System error. The comms are jammed. (Check Vercel Logs)");
     }
 });
 
-// If user sends VOICE, bot replies with VOICE
 bot.on('voice', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('record_voice');
+        await ctx.sendChatAction('record_voice');
         const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
         const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
         
@@ -132,24 +133,22 @@ bot.on('voice', async (ctx) => {
 
         const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
         
-        // ALWAYS send text first
         await sendSafeMessage(ctx, responseText);
         
-        // Try to generate and send voice
         const audioBuffer = await generateVoice(responseText);
         if (audioBuffer) {
             await ctx.replyWithVoice({ source: audioBuffer });
         }
     } catch (error) {
         console.error("Error processing voice:", error);
-        ctx.reply("Comms failure. I couldn't decrypt your audio.");
+        await ctx.reply("Comms failure. I couldn't decrypt your audio.");
     }
 });
 
 bot.on('photo', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('typing');
+        await ctx.sendChatAction('typing');
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
         const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
@@ -162,19 +161,16 @@ bot.on('photo', async (ctx) => {
         await sendSafeMessage(ctx, responseText);
     } catch (error) {
         console.error("Error processing photo:", error);
-        ctx.reply("Visual feed corrupted.");
+        await ctx.reply("Visual feed corrupted.");
     }
 });
 
 module.exports = async (req, res) => {
     try {
-        // We do NOT pass `res` to handleUpdate. 
-        // If we pass `res`, Telegraf uses "webhook reply" and kills the Vercel function on the first ctx.reply or ctx.sendChatAction!
         await bot.handleUpdate(req.body);
     } catch (e) {
         console.error(e);
     } finally {
-        // Always return 200 OK to Telegram so it doesn't retry
         res.status(200).send('OK');
     }
 };
