@@ -2,9 +2,11 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
+const { neon } = require('@neondatabase/serverless');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const sql = neon(process.env.DATABASE_URL);
 
 const spartanPersona = `You are a harsh, spartan, Genghis Khan-esque life advisor, professional commander, and friend. 
 You do not use generic AI language. You speak like a real MAN, highly masculine, high testosterone. 
@@ -33,49 +35,67 @@ const model = genAI.getGenerativeModel({
     systemInstruction: spartanPersona,
 });
 
-const userChats = new Map();
-
-function getChatSession(chatId) {
-    if (!userChats.has(chatId)) {
-        const chat = model.startChat({ history: [] });
-        userChats.set(chatId, chat);
-    }
-    return userChats.get(chatId);
+// Database memory access
+async function getHistory(chatId) {
+    const rows = await sql`SELECT history FROM chats WHERE chat_id = ${chatId}`;
+    if (rows.length > 0) return rows[0].history;
+    return [];
 }
 
-// Helper to send long messages safely and with HTML parse mode
+async function saveHistory(chatId, history) {
+    const jsonStr = JSON.stringify(history);
+    await sql`
+        INSERT INTO chats (chat_id, history) 
+        VALUES (${chatId}, ${jsonStr}::jsonb)
+        ON CONFLICT (chat_id) 
+        DO UPDATE SET history = EXCLUDED.history;
+    `;
+}
+
+// Serverless message processing
+async function processMessage(chatId, messagePart) {
+    const history = await getHistory(chatId);
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(messagePart);
+    
+    // Save updated history back to Neon
+    const newHistory = await chat.getHistory();
+    const formattedHistory = newHistory.map(h => ({
+        role: h.role,
+        parts: h.parts
+    }));
+    await saveHistory(chatId, formattedHistory);
+    
+    return result.response.text();
+}
+
 async function sendSafeMessage(ctx, text) {
-    // Telegram limit is 4096. We chunk safely.
     const chunkSize = 4000;
     for (let i = 0; i < text.length; i += chunkSize) {
         let chunk = text.substring(i, i + chunkSize);
         try {
             await ctx.reply(chunk, { parse_mode: 'HTML' });
         } catch (e) {
-            // Fallback if HTML tags are malformed by the AI
-            console.error("HTML Parse Error, falling back to plain text", e);
+            console.error("HTML Parse Error", e);
             await ctx.reply(chunk);
         }
     }
 }
 
-bot.start((ctx) => ctx.reply("System active. Comms secure. Speak, soldier. Excuses will be met with hell."));
+bot.start((ctx) => ctx.reply("System active. Comms secure. Neon Database Online. Speak, soldier."));
 
-// TEXT
 bot.on('text', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
         ctx.sendChatAction('typing');
-        const chatSession = getChatSession(chatId);
-        const result = await chatSession.sendMessage(ctx.message.text);
-        await sendSafeMessage(ctx, result.response.text());
+        const responseText = await processMessage(chatId, ctx.message.text);
+        await sendSafeMessage(ctx, responseText);
     } catch (error) {
         console.error("Error processing text:", error);
         ctx.reply("System error. The comms are jammed.");
     }
 });
 
-// VOICE
 bot.on('voice', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
@@ -87,21 +107,18 @@ bot.on('voice', async (ctx) => {
             inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "audio/ogg" }
         };
 
-        const chatSession = getChatSession(chatId);
-        const result = await chatSession.sendMessage([audioPart, { text: "Audio comms received. Analyze and reply." }]);
-        await sendSafeMessage(ctx, result.response.text());
+        const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
+        await sendSafeMessage(ctx, responseText);
     } catch (error) {
         console.error("Error processing voice:", error);
         ctx.reply("Comms failure. I couldn't decrypt your audio.");
     }
 });
 
-// PHOTOS (VISION)
 bot.on('photo', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
         ctx.sendChatAction('typing');
-        // Get the highest resolution photo (last in the array)
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
         const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
@@ -110,43 +127,14 @@ bot.on('photo', async (ctx) => {
             inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "image/jpeg" }
         };
 
-        const chatSession = getChatSession(chatId);
-        const result = await chatSession.sendMessage([imagePart, { text: "Visual intel received. Analyze this image." }]);
-        await sendSafeMessage(ctx, result.response.text());
+        const responseText = await processMessage(chatId, [imagePart, { text: "Visual intel received. Analyze this image." }]);
+        await sendSafeMessage(ctx, responseText);
     } catch (error) {
         console.error("Error processing photo:", error);
-        ctx.reply("Visual feed corrupted. Couldn't process the image.");
+        ctx.reply("Visual feed corrupted.");
     }
 });
 
-// DOCUMENTS (PDFs, etc)
-bot.on('document', async (ctx) => {
-    try {
-        const chatId = ctx.chat.id;
-        ctx.sendChatAction('typing');
-        const doc = ctx.message.document;
-        
-        // We'll try base64 inline data for quick analysis.
-        if (doc.mime_type !== 'application/pdf') {
-            return ctx.reply("I only process PDF intel documents right now. Convert it and send it again.");
-        }
-
-        const fileLink = await ctx.telegram.getFileLink(doc.file_id);
-        const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
-        
-        const docPart = {
-            inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "application/pdf" }
-        };
-
-        const chatSession = getChatSession(chatId);
-        const result = await chatSession.sendMessage([docPart, { text: "Document intel received. Read this and prepare to answer questions about it." }]);
-        await sendSafeMessage(ctx, result.response.text());
-    } catch (error) {
-        console.error("Error processing document:", error);
-        ctx.reply("Intel decryption failed. Document corrupted or too large.");
-    }
-});
-
-bot.launch().then(() => console.log("BEAST MODE V2 is active and listening."));
+bot.launch().then(() => console.log("BEAST MODE LOCAL is active and connected to Neon."));
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
