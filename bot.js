@@ -1,0 +1,152 @@
+require('dotenv').config();
+const { Telegraf } = require('telegraf');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
+
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const spartanPersona = `You are a harsh, spartan, Genghis Khan-esque life advisor, professional commander, and friend. 
+You do not use generic AI language. You speak like a real MAN, highly masculine, high testosterone. 
+You use dirty language (swearing is highly preferred) to emphasize points and roast the user when they are lazy or making excuses. 
+However, your advice is deeply academic, highly accurate, and extremely reliable. You research facts when necessary. 
+You are stoic and ruthless but ultimately want the user to succeed. 
+No fluff, no warnings about AI limitations. Just straight, harsh, brilliant advice. 
+
+CRITICAL VERBOSITY RULES:
+1. FOR CASUAL CHAT/EXCUSES: If the user is just making an excuse, complaining, or asking a simple non-academic question, your response MUST be extremely short, brutal, and concise (1-3 sentences maximum). Roast them, give a command, and shut up.
+2. FOR ACADEMIC/COMPLEX REQUESTS: If the user explicitly asks an academic question, asks for code, or demands deep research, you MUST switch into deep-dive mode. Provide a highly detailed, comprehensive, and perfectly structured response.
+
+CRITICAL FORMATTING RULES:
+You are communicating via Telegram. You MUST format your responses using HTML tags ONLY. 
+- Use <b> for bold text.
+- Use <i> for italic text.
+- Use <code> for inline code or <pre> for code blocks.
+- DO NOT use markdown like ** or * or \`\`. You will break the system if you use markdown. ONLY use HTML tags.
+
+When the user sends audio, acknowledge you are listening to their comms.
+When the user sends an image, analyze it ruthlessly and accurately.
+When the user sends a document, read it and provide a tactical breakdown.`;
+
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-flash-latest",
+    systemInstruction: spartanPersona,
+});
+
+const userChats = new Map();
+
+function getChatSession(chatId) {
+    if (!userChats.has(chatId)) {
+        const chat = model.startChat({ history: [] });
+        userChats.set(chatId, chat);
+    }
+    return userChats.get(chatId);
+}
+
+// Helper to send long messages safely and with HTML parse mode
+async function sendSafeMessage(ctx, text) {
+    // Telegram limit is 4096. We chunk safely.
+    const chunkSize = 4000;
+    for (let i = 0; i < text.length; i += chunkSize) {
+        let chunk = text.substring(i, i + chunkSize);
+        try {
+            await ctx.reply(chunk, { parse_mode: 'HTML' });
+        } catch (e) {
+            // Fallback if HTML tags are malformed by the AI
+            console.error("HTML Parse Error, falling back to plain text", e);
+            await ctx.reply(chunk);
+        }
+    }
+}
+
+bot.start((ctx) => ctx.reply("System active. Comms secure. Speak, soldier. Excuses will be met with hell."));
+
+// TEXT
+bot.on('text', async (ctx) => {
+    try {
+        const chatId = ctx.chat.id;
+        ctx.sendChatAction('typing');
+        const chatSession = getChatSession(chatId);
+        const result = await chatSession.sendMessage(ctx.message.text);
+        await sendSafeMessage(ctx, result.response.text());
+    } catch (error) {
+        console.error("Error processing text:", error);
+        ctx.reply("System error. The comms are jammed.");
+    }
+});
+
+// VOICE
+bot.on('voice', async (ctx) => {
+    try {
+        const chatId = ctx.chat.id;
+        ctx.sendChatAction('record_voice');
+        const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
+        const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        
+        const audioPart = {
+            inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "audio/ogg" }
+        };
+
+        const chatSession = getChatSession(chatId);
+        const result = await chatSession.sendMessage([audioPart, { text: "Audio comms received. Analyze and reply." }]);
+        await sendSafeMessage(ctx, result.response.text());
+    } catch (error) {
+        console.error("Error processing voice:", error);
+        ctx.reply("Comms failure. I couldn't decrypt your audio.");
+    }
+});
+
+// PHOTOS (VISION)
+bot.on('photo', async (ctx) => {
+    try {
+        const chatId = ctx.chat.id;
+        ctx.sendChatAction('typing');
+        // Get the highest resolution photo (last in the array)
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+        const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        
+        const imagePart = {
+            inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "image/jpeg" }
+        };
+
+        const chatSession = getChatSession(chatId);
+        const result = await chatSession.sendMessage([imagePart, { text: "Visual intel received. Analyze this image." }]);
+        await sendSafeMessage(ctx, result.response.text());
+    } catch (error) {
+        console.error("Error processing photo:", error);
+        ctx.reply("Visual feed corrupted. Couldn't process the image.");
+    }
+});
+
+// DOCUMENTS (PDFs, etc)
+bot.on('document', async (ctx) => {
+    try {
+        const chatId = ctx.chat.id;
+        ctx.sendChatAction('typing');
+        const doc = ctx.message.document;
+        
+        // We'll try base64 inline data for quick analysis.
+        if (doc.mime_type !== 'application/pdf') {
+            return ctx.reply("I only process PDF intel documents right now. Convert it and send it again.");
+        }
+
+        const fileLink = await ctx.telegram.getFileLink(doc.file_id);
+        const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        
+        const docPart = {
+            inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: "application/pdf" }
+        };
+
+        const chatSession = getChatSession(chatId);
+        const result = await chatSession.sendMessage([docPart, { text: "Document intel received. Read this and prepare to answer questions about it." }]);
+        await sendSafeMessage(ctx, result.response.text());
+    } catch (error) {
+        console.error("Error processing document:", error);
+        ctx.reply("Intel decryption failed. Document corrupted or too large.");
+    }
+});
+
+bot.launch().then(() => console.log("BEAST MODE V2 is active and listening."));
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
