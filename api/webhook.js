@@ -35,7 +35,6 @@ const model = genAI.getGenerativeModel({
     systemInstruction: spartanPersona,
 });
 
-// Database memory access
 async function getHistory(chatId) {
     const rows = await sql`SELECT history FROM chats WHERE chat_id = ${chatId}`;
     if (rows.length > 0) return rows[0].history;
@@ -52,18 +51,13 @@ async function saveHistory(chatId, history) {
     `;
 }
 
-// Serverless message processing
 async function processMessage(chatId, messagePart) {
     const history = await getHistory(chatId);
     const chat = model.startChat({ history });
     const result = await chat.sendMessage(messagePart);
     
-    // Save updated history back to Neon
     const newHistory = await chat.getHistory();
-    const formattedHistory = newHistory.map(h => ({
-        role: h.role,
-        parts: h.parts
-    }));
+    const formattedHistory = newHistory.map(h => ({ role: h.role, parts: h.parts }));
     await saveHistory(chatId, formattedHistory);
     
     return result.response.text();
@@ -82,6 +76,34 @@ async function sendSafeMessage(ctx, text) {
     }
 }
 
+// ElevenLabs Voice Generator
+async function generateVoice(text) {
+    if (!process.env.ELEVENLABS_API_KEY) return null;
+    try {
+        const VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Deep Male Voice (Adam)
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+        
+        // Strip HTML tags for the text-to-speech engine
+        const cleanText = text.replace(/<[^>]*>?/gm, '');
+
+        const response = await axios.post(url, {
+            text: cleanText,
+            model_id: "eleven_monolingual_v1",
+            voice_settings: { stability: 0.5, similarity_boost: 0.7 }
+        }, {
+            headers: {
+                'xi-api-key': process.env.ELEVENLABS_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            responseType: 'arraybuffer'
+        });
+        return Buffer.from(response.data);
+    } catch (error) {
+        console.error("ElevenLabs Error:", error.response?.data || error.message);
+        return null;
+    }
+}
+
 bot.start((ctx) => ctx.reply("System active. Comms secure. Neon Database Online. Speak, soldier."));
 
 bot.on('text', async (ctx) => {
@@ -96,6 +118,7 @@ bot.on('text', async (ctx) => {
     }
 });
 
+// If user sends VOICE, bot replies with VOICE
 bot.on('voice', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
@@ -108,7 +131,14 @@ bot.on('voice', async (ctx) => {
         };
 
         const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
-        await sendSafeMessage(ctx, responseText);
+        
+        // Try to generate voice, fallback to text if ElevenLabs fails
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) {
+            await ctx.replyWithVoice({ source: audioBuffer });
+        } else {
+            await sendSafeMessage(ctx, responseText);
+        }
     } catch (error) {
         console.error("Error processing voice:", error);
         ctx.reply("Comms failure. I couldn't decrypt your audio.");
@@ -135,7 +165,6 @@ bot.on('photo', async (ctx) => {
     }
 });
 
-// Vercel serverless export
 module.exports = async (req, res) => {
     try {
         await bot.handleUpdate(req.body, res);
