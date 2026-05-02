@@ -168,8 +168,13 @@ bot.on('photo', async (ctx) => {
 
 module.exports = async (req, res) => {
     try {
-        await bot.handleUpdate(req.body, res);
+        // We do NOT pass `res` to handleUpdate. 
+        // If we pass `res`, Telegraf uses "webhook reply" and kills the Vercel function on the first ctx.reply or ctx.sendChatAction!
+        await bot.handleUpdate(req.body);
     } catch (e) {
-        res.status(200).send('Error handling update');
+        console.error(e);
+    } finally {
+        // Always return 200 OK to Telegram so it doesn't retry
+        res.status(200).send('OK');
     }
 };
