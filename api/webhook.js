@@ -268,6 +268,7 @@ bot.action('roast_harder', async (ctx) => {
         if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
     } catch (e) {
         console.error(e);
+        try { await ctx.reply("System error. The comms are jammed. Google API is rate-limiting you."); } catch(err) {}
     }
 });
 
@@ -283,6 +284,7 @@ bot.action('expand_academic', async (ctx) => {
         if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
     } catch (e) {
         console.error(e);
+        try { await ctx.reply("System error. The comms are jammed. Google API is rate-limiting you."); } catch(err) {}
     }
 });
 
