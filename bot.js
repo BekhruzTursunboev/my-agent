@@ -63,12 +63,16 @@ async function processMessage(chatId, messagePart) {
     const chat = model.startChat({ history });
     const result = await chat.sendMessage(messagePart);
     
-    // Save updated history back to Neon
     const newHistory = await chat.getHistory();
-    const formattedHistory = newHistory.map(h => ({
-        role: h.role,
-        parts: h.parts
-    }));
+    // Strip heavy base64 media from history to prevent payload crashes and memory leaks
+    const formattedHistory = newHistory.map(h => {
+        const textParts = h.parts.filter(p => p.text).map(p => ({ text: p.text }));
+        return { 
+            role: h.role, 
+            parts: textParts.length > 0 ? textParts : [{ text: "[Media file analyzed]" }] 
+        };
+    }).slice(-30); // Keep only the last 30 messages to prevent token overflow
+    
     await saveHistory(chatId, formattedHistory);
     
     return result.response.text();
@@ -102,6 +106,12 @@ async function sendSafeMessage(ctx, text, withButtons = true) {
         let chunk = formattedText.substring(i, i + chunkSize);
         let isLastChunk = (i + chunkSize >= formattedText.length);
         let extraParams = { parse_mode: 'HTML' };
+        
+        if (ctx.message?.message_id) {
+            extraParams.reply_parameters = { message_id: ctx.message.message_id };
+        } else if (ctx.callbackQuery?.message?.message_id) {
+            extraParams.reply_parameters = { message_id: ctx.callbackQuery.message.message_id };
+        }
         
         if (isLastChunk && withButtons) {
             extraParams.reply_markup = {
@@ -222,6 +232,7 @@ bot.on('photo', async (ctx) => {
 bot.action('roast_harder', async (ctx) => {
     try {
         await ctx.answerCbQuery("Initiating aggressive roast protocol...");
+        try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }); } catch(e) {}
         const chatId = ctx.chat.id;
         await ctx.sendChatAction('typing');
         const responseText = await processMessage(chatId, "Roast me harder and more aggressively regarding our last topic.");
@@ -236,6 +247,7 @@ bot.action('roast_harder', async (ctx) => {
 bot.action('expand_academic', async (ctx) => {
     try {
         await ctx.answerCbQuery("Accessing academic database...");
+        try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }); } catch(e) {}
         const chatId = ctx.chat.id;
         await ctx.sendChatAction('typing');
         const responseText = await processMessage(chatId, "Provide a deeper, highly academic, and meticulously detailed breakdown of our last topic.");
@@ -244,6 +256,29 @@ bot.action('expand_academic', async (ctx) => {
         if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
     } catch (e) {
         console.error(e);
+    }
+});
+
+bot.on('document', async (ctx) => {
+    try {
+        const chatId = ctx.chat.id;
+        try { await ctx.react('⚡'); } catch(e) {}
+        await ctx.sendChatAction('typing');
+        const fileLink = await ctx.telegram.getFileLink(ctx.message.document.file_id);
+        const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        
+        const docPart = {
+            inlineData: { data: Buffer.from(response.data).toString('base64'), mimeType: ctx.message.document.mime_type }
+        };
+
+        const responseText = await processMessage(chatId, [docPart, { text: "Tactical document received. Provide a cold, meticulous breakdown." }]);
+        await sendSafeMessage(ctx, responseText, true);
+        
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
+    } catch (error) {
+        console.error("Error processing document:", error);
+        await ctx.reply("System error. Document encrypted or unsupported.");
     }
 });
 
