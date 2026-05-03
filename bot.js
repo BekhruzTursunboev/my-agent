@@ -96,6 +96,35 @@ async function sendSafeMessage(ctx, text) {
     }
 }
 
+async function generateVoice(text) {
+    if (!process.env.ELEVENLABS_API_KEY) return null;
+    try {
+        const VOICE_ID = "pNInz6obpgDQGcFmaJgB"; 
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+        const cleanText = text.replace(/<[^>]*>?/gm, '');
+
+        const response = await axios.post(url, {
+            text: cleanText,
+            model_id: "eleven_multilingual_v2",
+            voice_settings: { stability: 0.5, similarity_boost: 0.7 }
+        }, {
+            headers: {
+                'xi-api-key': process.env.ELEVENLABS_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            responseType: 'arraybuffer'
+        });
+        return Buffer.from(response.data);
+    } catch (error) {
+        let errorMsg = error.response?.data || error.message;
+        if (Buffer.isBuffer(errorMsg)) {
+            errorMsg = errorMsg.toString('utf-8');
+        }
+        console.error("ElevenLabs Error:", errorMsg);
+        return null;
+    }
+}
+
 bot.start((ctx) => ctx.reply("System active. Comms secure. Neon Database Online. Speak, soldier."));
 
 bot.on('text', async (ctx) => {
@@ -104,6 +133,11 @@ bot.on('text', async (ctx) => {
         ctx.sendChatAction('typing');
         const responseText = await processMessage(chatId, ctx.message.text);
         await sendSafeMessage(ctx, responseText);
+        
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) {
+            await ctx.replyWithVoice({ source: audioBuffer });
+        }
     } catch (error) {
         console.error("Error processing text:", error);
         ctx.reply("System error. The comms are jammed.");
@@ -123,6 +157,11 @@ bot.on('voice', async (ctx) => {
 
         const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
         await sendSafeMessage(ctx, responseText);
+        
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) {
+            await ctx.replyWithVoice({ source: audioBuffer });
+        }
     } catch (error) {
         console.error("Error processing voice:", error);
         ctx.reply("Comms failure. I couldn't decrypt your audio.");
