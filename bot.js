@@ -71,12 +71,21 @@ async function processMessage(chatId, messagePart) {
         };
     }).slice(-30);
 
-    // Gemini requires history to start with 'user'. If it starts with 'model' after slice, drop the first item.
-    if (history.length > 0 && history[0].role === 'model') {
-        history.shift();
+    // Gemini requires strict alternation starting with 'user'.
+    let strictHistory = [];
+    let expectedRole = 'user';
+    for (let h of history) {
+        // If the current message doesn't match the expected role, drop it to heal the DB.
+        if (h.role === expectedRole) {
+            strictHistory.push(h);
+            expectedRole = expectedRole === 'user' ? 'model' : 'user';
+        }
     }
 
-    const chat = model.startChat({ history });
+    // If we dropped so many that the last message is a 'model', but expectedRole is 'user', that's fine.
+    // If we end up with an empty history, that's fine too.
+    
+    const chat = model.startChat({ history: strictHistory });
     const result = await chat.sendMessage(messagePart);
     
     const newHistory = await chat.getHistory();
