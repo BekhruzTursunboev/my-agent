@@ -57,19 +57,38 @@ async function saveHistory(chatId, history) {
 }
 
 async function processMessage(chatId, messagePart) {
-    const history = await getHistory(chatId);
+    let rawHistory = await getHistory(chatId);
+    
+    // Sanitize existing history from DB (removes old massive base64 media)
+    let history = (Array.isArray(rawHistory) ? rawHistory : []).map(h => {
+        if (!h || !h.parts || !Array.isArray(h.parts)) return { role: "user", parts: [{ text: "[Corrupted]" }] };
+        const textParts = h.parts.filter(p => p && p.text).map(p => ({ text: p.text }));
+        return { 
+            role: h.role || "user", 
+            parts: textParts.length > 0 ? textParts : [{ text: "[Media file analyzed]" }] 
+        };
+    }).slice(-30);
+
+    // Gemini requires history to start with 'user'. If it starts with 'model' after slice, drop the first item.
+    if (history.length > 0 && history[0].role === 'model') {
+        history.shift();
+    }
+
     const chat = model.startChat({ history });
     const result = await chat.sendMessage(messagePart);
     
     const newHistory = await chat.getHistory();
-    // Strip heavy base64 media from history to prevent payload crashes and memory leaks
-    const formattedHistory = newHistory.map(h => {
+    let formattedHistory = newHistory.map(h => {
         const textParts = h.parts.filter(p => p.text).map(p => ({ text: p.text }));
         return { 
             role: h.role, 
             parts: textParts.length > 0 ? textParts : [{ text: "[Media file analyzed]" }] 
         };
-    }).slice(-30); // Keep only the last 30 messages to prevent token overflow
+    }).slice(-30);
+    
+    if (formattedHistory.length > 0 && formattedHistory[0].role === 'model') {
+        formattedHistory.shift();
+    }
     
     await saveHistory(chatId, formattedHistory);
     
