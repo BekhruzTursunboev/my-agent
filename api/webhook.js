@@ -66,13 +66,22 @@ async function processMessage(chatId, messagePart) {
 
 function formatToTelegramHTML(text) {
     if (!text) return '';
-    let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let html = text;
+    
+    // 1. Escape & first, but don't break existing HTML entities
+    html = html.replace(/&(?!(amp|lt|gt|quot|apos);)/g, '&amp;');
+    
+    // 2. Convert markdown to HTML tags
     html = html.replace(/```(?:[a-zA-Z0-9-]+\n)?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>');
     html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<i>$1</i>');
     html = html.replace(/__([\s\S]+?)__/g, '<i>$1</i>');
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    
+    // 3. Escape < that are NOT part of valid Telegram HTML tags
+    html = html.replace(/<(?!\/?(b|strong|i|em|u|ins|s|strike|del|span|tg-spoiler|a|code|pre)\b)/g, '&lt;');
+    
     return html;
 }
 
