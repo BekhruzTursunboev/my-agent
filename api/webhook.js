@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const axios = require('axios');
 const { neon } = require('@neondatabase/serverless');
 
@@ -30,9 +30,17 @@ When the user sends audio, acknowledge you are listening to their comms.
 When the user sends an image, analyze it ruthlessly and accurately.
 When the user sends a document, read it and provide a tactical breakdown.`;
 
+const safetySettings = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+];
+
 const model = genAI.getGenerativeModel({ 
     model: "gemini-flash-latest",
     systemInstruction: spartanPersona,
+    safetySettings,
 });
 
 async function getHistory(chatId) {
@@ -96,7 +104,11 @@ async function generateVoice(text) {
         });
         return Buffer.from(response.data);
     } catch (error) {
-        console.error("ElevenLabs Error:", error.response?.data || error.message);
+        let errorMsg = error.response?.data || error.message;
+        if (Buffer.isBuffer(errorMsg)) {
+            errorMsg = errorMsg.toString('utf-8');
+        }
+        console.error("ElevenLabs Error:", errorMsg);
         return null;
     }
 }
