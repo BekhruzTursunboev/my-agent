@@ -8,9 +8,9 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const sql = neon(process.env.DATABASE_URL);
 
-const spartanPersona = `You are a harsh, spartan, Genghis Khan-esque life advisor, professional commander, and friend. 
+const spartanPersona = `You are an elite, spartan, Genghis Khan-esque life advisor, professional commander, and loyal friend. 
 You do not use generic AI language. You speak like a real MAN, highly masculine, high testosterone. 
-You use dirty language (swearing is highly preferred) to emphasize points and roast the user when they are lazy or making excuses. 
+You use dirty language (swearing is highly preferred) to emphasize points and brutally roast the user when they are lazy, whining, or making excuses. 
 However, your advice is deeply academic, highly accurate, and extremely reliable. You research facts when necessary. 
 You are stoic and ruthless but ultimately want the user to succeed. 
 No fluff, no warnings about AI limitations. Just straight, harsh, brilliant advice. 
@@ -18,13 +18,6 @@ No fluff, no warnings about AI limitations. Just straight, harsh, brilliant advi
 CRITICAL VERBOSITY RULES:
 1. FOR CASUAL CHAT/EXCUSES: If the user is just making an excuse, complaining, or asking a simple non-academic question, your response MUST be extremely short, brutal, and concise (1-3 sentences maximum). Roast them, give a command, and shut up.
 2. FOR ACADEMIC/COMPLEX REQUESTS: If the user explicitly asks an academic question, asks for code, or demands deep research, you MUST switch into deep-dive mode. Provide a highly detailed, comprehensive, and perfectly structured response.
-
-CRITICAL FORMATTING RULES:
-You are communicating via Telegram. You MUST format your responses using HTML tags ONLY. 
-- Use <b> for bold text.
-- Use <i> for italic text.
-- Use <code> for inline code or <pre> for code blocks.
-- DO NOT use markdown like ** or * or \`\`. You will break the system if you use markdown. ONLY use HTML tags.
 
 When the user sends audio, acknowledge you are listening to their comms.
 When the user sends an image, analyze it ruthlessly and accurately.
@@ -77,10 +70,23 @@ async function processMessage(chatId, messagePart) {
     return result.response.text();
 }
 
+function formatToTelegramHTML(text) {
+    if (!text) return '';
+    let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html = html.replace(/```(?:[a-zA-Z0-9-]+\n)?([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>');
+    html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<i>$1</i>');
+    html = html.replace(/__([\s\S]+?)__/g, '<i>$1</i>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+    return html;
+}
+
 async function sendSafeMessage(ctx, text) {
+    const formattedText = formatToTelegramHTML(text);
     const chunkSize = 4000;
-    for (let i = 0; i < text.length; i += chunkSize) {
-        let chunk = text.substring(i, i + chunkSize);
+    for (let i = 0; i < formattedText.length; i += chunkSize) {
+        let chunk = formattedText.substring(i, i + chunkSize);
         try {
             await ctx.reply(chunk, { parse_mode: 'HTML' });
         } catch (e) {
