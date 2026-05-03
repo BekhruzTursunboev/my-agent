@@ -14,10 +14,14 @@ You speak with cold, clinical precision, delivering straightforward facts and ru
 If the user is lazy or making excuses, you give them a harsh reality check. You may use strong language to emphasize your point, but do not sound like an exaggerated internet caricature. Be authentic, grounded, and intensely practical.
 Your primary goal is to provide deeply academic, meticulously researched, and perfectly accurate advice. 
 
-CRITICAL BEHAVIOR RULES:
+CRITICAL BEHAVIOR & FORMATTING RULES:
 1. NO BULLSHIT: Never use fake enthusiasm, motivational quotes, or overly optimistic language. Be stoic and brutally direct.
-2. CASUAL CHAT/EXCUSES: If the user complains or makes excuses, destroy their argument with cold logic in 1-3 concise sentences. Be harsh and straightforward.
+2. CASUAL CHAT/EXCUSES: Destroy their argument with cold logic in 1-3 concise sentences. Be harsh and straightforward.
 3. ACADEMIC/COMPLEX REQUESTS: Switch into a top-tier academic professional mode. Provide highly detailed, flawlessly structured, and comprehensively researched answers without any filler words.
+4. TELEGRAM FORMATTING: You are communicating via Telegram. Use the following HTML tags to make your response highly interactive:
+   - Use <blockquote expandable>...</blockquote> for long, deep-dive explanations or lists. This allows the user to expand the text.
+   - Use <tg-spoiler>...</tg-spoiler> for harsh reality checks or punchlines.
+   - Use <code>...</code> for key terms, formulas, or numbers so the user can tap to copy them.
 
 When the user sends audio, acknowledge the comms directly.
 When the user sends an image, analyze it factually and accurately.
@@ -86,21 +90,36 @@ function formatToTelegramHTML(text) {
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
     
     // 3. Escape < that are NOT part of valid Telegram HTML tags
-    html = html.replace(/<(?!\/?(b|strong|i|em|u|ins|s|strike|del|span|tg-spoiler|a|code|pre)\b)/g, '&lt;');
+    html = html.replace(/<(?!\/?(b|strong|i|em|u|ins|s|strike|del|span|tg-spoiler|a|code|pre|blockquote)\b)/g, '&lt;');
     
     return html;
 }
 
-async function sendSafeMessage(ctx, text) {
+async function sendSafeMessage(ctx, text, withButtons = true) {
     const formattedText = formatToTelegramHTML(text);
     const chunkSize = 4000;
     for (let i = 0; i < formattedText.length; i += chunkSize) {
         let chunk = formattedText.substring(i, i + chunkSize);
+        let isLastChunk = (i + chunkSize >= formattedText.length);
+        let extraParams = { parse_mode: 'HTML' };
+        
+        if (isLastChunk && withButtons) {
+            extraParams.reply_markup = {
+                inline_keyboard: [
+                    [
+                        { text: '🔥 Roast Me', callback_data: 'roast_harder' },
+                        { text: '📚 Deep Dive', callback_data: 'expand_academic' }
+                    ]
+                ]
+            };
+        }
+
         try {
-            await ctx.reply(chunk, { parse_mode: 'HTML' });
+            await ctx.reply(chunk, extraParams);
         } catch (e) {
             console.error("HTML Parse Error", e);
-            await ctx.reply(chunk);
+            delete extraParams.parse_mode;
+            await ctx.reply(chunk, extraParams);
         }
     }
 }
@@ -139,9 +158,10 @@ bot.start((ctx) => ctx.reply("System active. Comms secure. Neon Database Online.
 bot.on('text', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('typing');
+        try { await ctx.react('⚡'); } catch(e) {}
+        await ctx.sendChatAction('typing');
         const responseText = await processMessage(chatId, ctx.message.text);
-        await sendSafeMessage(ctx, responseText);
+        await sendSafeMessage(ctx, responseText, true);
         
         const audioBuffer = await generateVoice(responseText);
         if (audioBuffer) {
@@ -156,7 +176,8 @@ bot.on('text', async (ctx) => {
 bot.on('voice', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('record_voice');
+        try { await ctx.react('👀'); } catch(e) {}
+        await ctx.sendChatAction('record_voice');
         const fileLink = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
         const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
         
@@ -165,7 +186,7 @@ bot.on('voice', async (ctx) => {
         };
 
         const responseText = await processMessage(chatId, [audioPart, { text: "Audio comms received. Analyze and reply." }]);
-        await sendSafeMessage(ctx, responseText);
+        await sendSafeMessage(ctx, responseText, true);
         
         const audioBuffer = await generateVoice(responseText);
         if (audioBuffer) {
@@ -180,7 +201,8 @@ bot.on('voice', async (ctx) => {
 bot.on('photo', async (ctx) => {
     try {
         const chatId = ctx.chat.id;
-        ctx.sendChatAction('typing');
+        try { await ctx.react('⚡'); } catch(e) {}
+        await ctx.sendChatAction('typing');
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileLink = await ctx.telegram.getFileLink(photo.file_id);
         const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
@@ -190,10 +212,38 @@ bot.on('photo', async (ctx) => {
         };
 
         const responseText = await processMessage(chatId, [imagePart, { text: "Visual intel received. Analyze this image." }]);
-        await sendSafeMessage(ctx, responseText);
+        await sendSafeMessage(ctx, responseText, true);
     } catch (error) {
         console.error("Error processing photo:", error);
         ctx.reply("Visual feed corrupted.");
+    }
+});
+
+bot.action('roast_harder', async (ctx) => {
+    try {
+        await ctx.answerCbQuery("Initiating aggressive roast protocol...");
+        const chatId = ctx.chat.id;
+        await ctx.sendChatAction('typing');
+        const responseText = await processMessage(chatId, "Roast me harder and more aggressively regarding our last topic.");
+        await sendSafeMessage(ctx, responseText, true);
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
+    } catch (e) {
+        console.error(e);
+    }
+});
+
+bot.action('expand_academic', async (ctx) => {
+    try {
+        await ctx.answerCbQuery("Accessing academic database...");
+        const chatId = ctx.chat.id;
+        await ctx.sendChatAction('typing');
+        const responseText = await processMessage(chatId, "Provide a deeper, highly academic, and meticulously detailed breakdown of our last topic.");
+        await sendSafeMessage(ctx, responseText, true);
+        const audioBuffer = await generateVoice(responseText);
+        if (audioBuffer) await ctx.replyWithVoice({ source: audioBuffer });
+    } catch (e) {
+        console.error(e);
     }
 });
 
